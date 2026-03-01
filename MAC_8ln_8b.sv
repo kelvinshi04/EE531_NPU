@@ -23,15 +23,15 @@
 module MAC_8ln_8b(
     input logic signed [7:0] [7:0] data,
     input logic signed [7:0] [7:0] weight,
-    output logic [19:0] result,
+    output logic signed [19:0] result,
     output logic cout
     );
     
     logic signed [7:0] [15:0] products;
     logic signed [2:0] [15:0] s1_pp, s1_carry;
     logic signed [15:0] s2_pp1, s2_carry1;
-    logic signed [16:0] s2_pp2, s2_carry2;
-    logic signed [16:0] s3_pp, s3_carry;
+    logic signed [17:0] s2_pp2, s2_carry2;
+    logic signed [17:0] s3_pp, s3_carry;
     logic signed [17:0] s4_pp, s4_carry;
 
     
@@ -48,19 +48,28 @@ module MAC_8ln_8b(
     // Stage 1 Adder
     csa_16b a1 (products[0], products[1], products[2], s1_pp[0], s1_carry[0]);
     csa_16b a2 (products[3], products[4], products[5], s1_pp[1], s1_carry[1]);
-    csa_16b a3 (products[6], products[7], 15'b0, s1_pp[2], s1_carry[2]);
+    csa_16b a3 (products[6], products[7], 16'b0, s1_pp[2], s1_carry[2]);
     
     // Stage 2 Adder
+    logic signed [2:0] [17:0] s1_carry2;
     csa_16b a4 (s1_pp[0], s1_pp[1], s1_pp[2], s2_pp1, s2_carry1);
-    csa_18b a5 ((s1_carry[0] << 1), (s1_carry[1] << 1), (s1_carry[2] << 1), s2_pp2, s2_carry2);
+    
+    assign s1_carry2[0] = 18'(signed'(s1_carry[0])) << 1;
+    assign s1_carry2[1] = 18'(signed'(s1_carry[1])) << 1;
+    assign s1_carry2[2] = 18'(signed'(s1_carry[2])) << 1;
+    csa_18b a5 (s1_carry2[0], s1_carry2[1], s1_carry2[2], s2_pp2, s2_carry2);
     
     // Stage 3 Adder
-    csa_18b a6 (s2_pp1, s2_pp2, (s1_carry << 1), s3_pp, s3_carry);
+    logic signed [17:0] s2_carry;
+    assign s2_carry = 18'(signed'(s2_carry1)) << 1;
+    csa_18b a6 ({{2{s2_pp1[15]}}, s2_pp1}, s2_pp2, s2_carry, s3_pp, s3_carry);
     
     // Stage 4 Adder
-    csa_18b a7 (s3_pp, (s3_carry << 1), (s2_carry2 << 1), s3_pp, s3_carry, s4_pp, s4_carry);
+    csa_18b a7 (s3_pp, (s3_carry << 1), (s2_carry2 << 1), s4_pp, s4_carry);
     
     // Final Adder
-    cla_20b a8 ({s4_pp[17], s4_pp}, (s4_carry << 1), 1'b0, result, cout);
+    logic signed [18:0] s4_carry1;
+    assign s4_carry1 = 19'(signed'(s4_carry)) << 1;
+    cla_20b a8 ({s4_pp[17], s4_pp}, s4_carry1, 1'b0, result, cout);
     
 endmodule
