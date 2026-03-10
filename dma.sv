@@ -3,53 +3,82 @@
 // Module Name: dma
 // Description: Bidirectional DMA for NPU scratchpad SRAMs.
 //
+// Shared write bus architecture:
+//   - DMA drives addr, din, web, wmask onto shared bus
+//   - FSM externally controls csb[3:0] to select which SRAM is active
+//   - DMA has no knowledge of which SRAM it is talking to
+//
 // direction=0 (LOAD):
-//   Host pushes words via src_valid/src_ready into SRAM A (data) or B (weights)
+//   Host pushes words via src_valid/src_ready handshake
+//   DMA drives shared write bus
+//   FSM asserts appropriate csb
 //
 // direction=1 (WRITEBACK):
-//   DMA reads output SRAM via Port 1 and pushes words to host via dst_valid/dst_ready
+//   DMA reads output SRAM Port 1 via dedicated read path
+//   DMA pushes words to host via dst_valid/dst_ready handshake
+//   FSM asserts csb1 for output SRAM Port 1
 //
-// SRAM read latency: 1 cycle (addr presented on posedge, data valid after negedge)
-// FSM accounts for this with READ_WAIT state
+// SRAMs on shared bus:
+//   csb[0] = SRAM 0 (data)
+//   csb[1] = SRAM 1 (weights)
+//   csb[2] = SRAM 2 (bias)
+//   csb[3] = SRAM 3 (output) -- writeback source via Port 1
+//
+// Pipeline:
+//   IDLE      -> wait for start
+//   LOAD      -> accept words from host, drive write bus
+//   READ_REQ  -> present address to output SRAM Port 1
+//   READ_WAIT -> wait one cycle for SRAM read latency
+//   WRITEBACK -> push data to host
+//   DONE      -> pulse done, return to IDLE
 //////////////////////////////////////////////////////////////////////////////////
 
 module dma (
     input  logic        clk,
     input  logic        reset,
 
-    input  logic        direction,
-    input  logic        target_sel,
-    input  logic [8:0]  start_addr,
-    input  logic [8:0]  transfer_len,
-    input  logic        start,
+    // -------------------------------------------------------------------------
+    // Host control interface
+    // -------------------------------------------------------------------------
+    input  logic        direction,      // 0=load, 1=writeback
+    input  logic [8:0]  start_addr,     // SRAM start address
+    input  logic [8:0]  transfer_len,   // number of 32-bit words
+    input  logic        start,          // pulse high to begin
+    output logic        done,           // pulses high one cycle when complete
 
-    output logic        done,
-
+    // -------------------------------------------------------------------------
+    // LOAD interface (host -> DMA)
+    // -------------------------------------------------------------------------
     input  logic [31:0] src_data,
     input  logic        src_valid,
     output logic        src_ready,
 
+    // -------------------------------------------------------------------------
+    // WRITEBACK interface (DMA -> host)
+    // -------------------------------------------------------------------------
     output logic [31:0] dst_data,
     output logic        dst_valid,
     input  logic        dst_ready,
 
-    output logic        csb0_a,
-    output logic        web0_a,
-    output logic [3:0]  wmask0_a,
-    output logic [8:0]  addr0_a,
-    output logic [31:0] din0_a,
+    // -------------------------------------------------------------------------
+    // Shared write bus (driven by DMA, csb controlled by FSM externally)
+    // -------------------------------------------------------------------------
+    output logic [8:0]  bus_addr,       // write address
+    output logic [31:0] bus_din,        // write data
+    output logic        bus_web,        // active low write enable
+    output logic [3:0]  bus_wmask,      // byte write mask
 
-    output logic        csb0_b,
-    output logic        web0_b,
-    output logic [3:0]  wmask0_b,
-    output logic [8:0]  addr0_b,
-    output logic [31:0] din0_b,
-
-    output logic        csb1_out,
-    output logic [8:0]  addr1_out,
-    input  logic [31:0] dout1_out
+    // -------------------------------------------------------------------------
+    // Output SRAM Port 1 read path (writeback source)
+    // -------------------------------------------------------------------------
+    output logic [8:0]  bus_addr1,      // read address to output SRAM Port 1
+    output logic        bus_csb1,       // active low chip select for Port 1
+    input  logic [31:0] bus_dout1       // read data from output SRAM Port 1
 );
 
+    // -------------------------------------------------------------------------
+    // FSM State Encoding
+    // -------------------------------------------------------------------------
     typedef enum logic [2:0] {
         IDLE      = 3'b000,
         LOAD      = 3'b001,
@@ -61,9 +90,11 @@ module dma (
 
     state_t state, next_state;
 
+    // -------------------------------------------------------------------------
+    // Internal Registers
+    // -------------------------------------------------------------------------
     logic [8:0] addr_cnt;
     logic [8:0] words_remaining;
-    logic       target_sel_r;
     logic       direction_r;
 
     // -------------------------------------------------------------------------
@@ -75,7 +106,7 @@ module dma (
             done  <= 1'b0;
         end else begin
             state <= next_state;
-            done  <= (next_state == DONE);  // stable full cycle, testbench can't miss it
+            done  <= (next_state == DONE);
         end
     end
 
@@ -122,7 +153,6 @@ module dma (
         if (reset) begin
             addr_cnt        <= '0;
             words_remaining <= '0;
-            target_sel_r    <= '0;
             direction_r     <= '0;
         end else begin
             case (state)
@@ -130,7 +160,6 @@ module dma (
                     if (start) begin
                         addr_cnt        <= start_addr;
                         words_remaining <= transfer_len;
-                        target_sel_r    <= target_sel;
                         direction_r     <= direction;
                     end
                 end
@@ -156,31 +185,31 @@ module dma (
 
     // -------------------------------------------------------------------------
     // LOAD Output Logic
+    // src_ready: high during LOAD when words remain
+    // bus_web:   active low, asserted only during valid handshake
+    // bus_addr:  always driven from addr_cnt
+    // bus_din:   always driven from src_data
+    // bus_wmask: always full word write
+    // NOTE: bus_web being low AND the FSM asserting csb together form
+    //       a valid write - neither alone causes a write
     // -------------------------------------------------------------------------
     assign src_ready = (state == LOAD) && (words_remaining != 9'd0);
 
-    logic write_en_a, write_en_b;
-    assign write_en_a = src_valid && src_ready && ~target_sel_r;
-    assign write_en_b = src_valid && src_ready &&  target_sel_r;
-
-    assign csb0_a   = ~write_en_a;
-    assign web0_a   = ~write_en_a;
-    assign wmask0_a = 4'b1111;
-    assign addr0_a  = addr_cnt;
-    assign din0_a   = src_data;
-
-    assign csb0_b   = ~write_en_b;
-    assign web0_b   = ~write_en_b;
-    assign wmask0_b = 4'b1111;
-    assign addr0_b  = addr_cnt;
-    assign din0_b   = src_data;
+    assign bus_web   = ~(src_valid && src_ready);  // active low
+    assign bus_addr  = addr_cnt;
+    assign bus_din   = src_data;
+    assign bus_wmask = 4'b1111;
 
     // -------------------------------------------------------------------------
     // WRITEBACK Output Logic
+    // bus_csb1:  active low, asserted during READ_REQ and READ_WAIT
+    // bus_addr1: driven from addr_cnt during read states
+    // dst_valid: high when data is ready in WRITEBACK state
+    // dst_data:  directly from SRAM Port 1 output
     // -------------------------------------------------------------------------
-    assign csb1_out  = ~(state == READ_REQ || state == READ_WAIT);
-    assign addr1_out = addr_cnt;
+    assign bus_csb1  = ~(state == READ_REQ || state == READ_WAIT);
+    assign bus_addr1 = addr_cnt;
     assign dst_valid = (state == WRITEBACK);
-    assign dst_data  = dout1_out;
+    assign dst_data  = bus_dout1;
 
 endmodule
