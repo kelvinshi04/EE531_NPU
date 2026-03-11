@@ -25,8 +25,8 @@ module MAC_pip_4ln_8b(
     input logic reset,
     
     input logic signed [31:0] bias,
-    input logic signed [7:0] data [4],
-    input logic signed [7:0] weight [4],
+    input logic signed [31:0] data,
+    input logic signed [31:0] weight,
     
     input logic acc_en,
     input logic load,
@@ -50,10 +50,10 @@ module MAC_pip_4ln_8b(
     logic signed [31:0] out;
     
     // Parallel 4-lane multiplication
-    booth_mult_8b m1 (data[0], weight[0], prod_in[0]);
-    booth_mult_8b m2 (data[1], weight[1], prod_in[1]);
-    booth_mult_8b m3 (data[2], weight[2], prod_in[2]);
-    booth_mult_8b m4 (data[3], weight[3], prod_in[3]);
+    booth_mult_8b m1 (data[7:0], weight[7:0], prod_in[0]);
+    booth_mult_8b m2 (data[15:8], weight[15:8], prod_in[1]);
+    booth_mult_8b m3 (data[23:16], weight[23:16], prod_in[2]);
+    booth_mult_8b m4 (data[31:24], weight[31:24], prod_in[3]);
 
     // Multiplier Pipeline Register
     reg_nb #(.n(16)) pip_m1 (prod_in[0], clk, reset, prod_out[0]);
@@ -95,13 +95,15 @@ module MAC_pip_4ln_8b(
     // Accumulate Stage
     logic signed [31:0] s3_sum;
     logic signed [31:0] fin_add, accum_out;
+    logic overflow;
     assign s3_sum = {{12{s3_s_out[19]}}, s3_s_out};
     
-    cla_32b a9 (s3_sum, out, 1'b0, accum_out, cout);
+    cla_32b a9 (s3_sum, out, 1'b0, accum_out, overflow);
     
     // select between bias input or accumulation
     mux_2t1_32b x1(bias, accum_out, acc_en, fin_add);
     
-    reg_ld_nb #(.n(32)) accum (fin_add, clk, reset, load, out);
+    reg_ld_nb #(.n(32)) accum_s (fin_add, clk, reset, load, out);
+    reg_ld_nb #(.n(32)) accum_c (overflow, clk, reset, load, cout);
     assign result = out;
 endmodule
