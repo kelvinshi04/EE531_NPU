@@ -23,6 +23,12 @@
 module NPU_topmodule (
     input logic CLK,
     input logic RESET,
+    input logic [3:0] VECTOR_SIZE,
+    input logic START_NPU,
+    output logic NPU_DONE,
+    
+    input [8:0] START_ADDR,
+    input [8:0] TRANSFER_LEN,
     
     // DMA Input Signals
     input  logic [31:0] SRC_DATA,
@@ -31,67 +37,105 @@ module NPU_topmodule (
     
     output logic [31:0] DST_DATA,
     output logic        DST_VALID,
-    input  logic        DST_READY,
-    
-    input logic [31:0] BIAS,
-    input logic [3:0] VECTOR_SIZE
-    
-    
+    input  logic        DST_READY
     );
     
     // =========================================================================
     // FSM Control Signals
     // =========================================================================
     
-    
-    
-    // =========================================================================
-    // DMA Instantiation
-    // =========================================================================
-    
-    //DMA Variables
-    logic direction, target_sel, start, done;
-    logic [8:0] start_addr, transfer_len;
-    
+    // DMA Control Varibles
+    logic direction, start_dma, done;
     
     //Scratchpad Signals
-    logic        csb0_a, web0_a, csb0_b, web0_b;
-    logic [3:0]  wmask0_a, wmask0_b;
-    logic [8:0]  addr0_a, addr0_b;
-    logic [31:0] din0_a, din0_b;
-    logic        csb1_out;
-    logic [8:0]  addr1_out;
-    logic [31:0] out_rd_data;
-    logic        data_rd_en;
-    logic [8:0]  data_rd_addr;
-    logic        acc_en, load;
-    logic signed [31:0] bias;
-    logic        out_wr_en;
-    logic [8:0]  out_wr_addr;
-    logic [31:0] out_wr_data;
+    logic bias_csb, data_csb, wgt_csb, bus_csb1;
+    logic bias_rd_en, data_rd_en, wgt_rd_en;
     
-        // Internal Signals
-    logic [8:0] k_addr;
-    logic [31:0] data_rd_data;
-    logic [31:0] wgt_dout;
-    logic signed [7:0] wgt_to_mac [4];
+    //MAC Variables
+    logic acc_en, load;
+    logic inc_addr;
+    
+    //Output SRAM
+    logic out_wr_en;
+    logic vec_done;
+    
+    
+    // =========================================================================
+    // Internal Signals
+    // =========================================================================
+    
+    //Scratchpad Signals
+    logic bus_web;
+    logic [3:0]  bus_wmask;
+    logic [8:0]  bus_addr;
+    logic [31:0] bus_din;
+    logic [8:0]  bus_addr1;
+    logic signed [31:0] bias_dout, data_dout, wgt_dout;
+    
+    //MAC Variables
+    logic [8:0] MAC_addr; // Controlled  by Addr Counter
     logic signed [7:0] data_to_mac [4];
+    logic signed [7:0] wgt_to_mac [4];
     logic signed [31:0] mac_result;
     logic signed [31:0] sat_result;
-    logic overflow;
+    logic overflow; 
     
+    //Output SRAM
+    logic [8:0]  out_wr_addr; // Controlled by Addr Counter
+    logic [31:0] bus_dout1;
+    
+    // =========================================================================
+    // Control
+    // =========================================================================
+    Control_FSM fsm (
+        .clk        (CLK),
+        .reset      (RESET),
+        .start_npu  (START_NPU),
+        .npu_done   (NPU_DONE),
+        .inc_addr   (inc_addr),
+        .addr       (MAC_addr),
+        .vec_done   (vec_done),
+        .direction  (direction),
+        .start_dma  (start_dma),
+        .done       (done),
+        .bias_csb   (bias_csb),
+        .data_csb   (data_csb),
+        .wgt_csb    (wgt_csb),
+        .bus_csb1   (bus_csb1),
+        .bias_rd_en (bias_rd_en),
+        .data_rd_en (data_rd_en),
+        .wgt_rd_en  (wgt_rd_en),
+        .acc_en     (acc_en),
+        .load       (load),
+        .out_wr_en  (out_wr_en)
+    );
+    
+    
+        // Address Counter
+    Address_Counter addr_cnt (
+        .clk         (CLK),
+        .reset       (RESET),
+        .inc_addr    (inc_addr),   
+        .vector_size (VECTOR_SIZE),
+    
+        .addr        (MAC_addr), 
+        .output_addr (out_wr_addr), 
+        .vec_done    (vec_done) 
+    );
+    
+    // =========================================================================
+    // DMA
+    // =========================================================================
     
     dma dma_main (
         .clk          (CLK),
         .reset        (RESET),
-       
         .direction    (direction),
         
         // Transfer configuration - set before asserting start
-        .target_sel   (target_sel),     // 0=SRAM A, 1=SRAM B
-        .start_addr   (start_addr),     // [8:0] destination start address
-        .transfer_len (transfer_len),   // [8:0] number of words to transfer
-        .start        (start),          // pulse high for one cycle to begin
+        .start_addr   (START_ADDR),     // [8:0] destination start address
+        .transfer_len (TRANSFER_LEN),   // [8:0] number of words to transfer
+        .start        (start_dma),      // pulse high for one cycle to begin
         .done         (done),           // one-cycle pulse when transfer complete
     
         // Source data stream - from main memory
@@ -103,75 +147,80 @@ module NPU_topmodule (
         .dst_data     (DST_DATA),       // [31:0] outgoing data word
         .dst_valid    (DST_VALID),      // data on dst_data is valid
         .dst_ready    (DST_READY),      // Ext mem ready to accept data
-    
-        // SRAM A write port (port 0) - connect to data_sram
-        .csb0_a       (csb0_a),  
-        .web0_a       (web0_a),    
-        .wmask0_a     (wmask0_a), 
-        .addr0_a      (addr0_a),    
-        .din0_a       (din0_a),      
-    
-        // SRAM B write port (port 1) - connect to wgt_sram
-        .csb0_b       (csb0_b),   
-        .web0_b       (web0_b),  
-        .wmask0_b     (wmask0_b),  
-        .addr0_b      (addr0_b),    
-        .din0_b       (din0_b),
         
-        // SRAM C write port (port 2) - connect to out_sram
-        .csb1_out       (csb1_out),   
-        .addr1_out      (addr1_out),    
-        .dout1_out      (out_rd_data)
+        // SRAM write BUS
+        .bus_addr     (bus_addr),  
+        .bus_din      (bus_din),    
+        .bus_web      (bus_web), 
+        .bus_wmask    (bus_wmask),    
+        
+        // Output SRAM access
+        .bus_addr1    (bus_addr1),
+        .bus_csb1     (bus_csb1),
+        .bus_dout1    (bus_dout1)
+    );
+    
+    // =========================================================================
+    // Scratchpad Memories
+    // =========================================================================
+    
+    sky130_sram_2kbyte_1rw1r_32x512_8 bias_sram (
+        // Port 0 - DMA write
+        .clk0   (CLK),
+        .csb0   (~bias_csb),
+        .web0   (bus_web),
+        .wmask0 (bus_wmask),
+        .addr0  (bus_addr),
+        .din0   (bus_din),
+        .dout0  (),
+
+        // Port 1 - To MAC
+        .clk1   (CLK),
+        .csb1   (~bias_rd_en),
+        .addr1  (out_wr_addr),
+        .dout1  (bias_dout)
     );
     
     
     sky130_sram_2kbyte_1rw1r_32x512_8 data_sram (
         // Port 0 - DMA write
         .clk0   (CLK),
-        .csb0   (csb0_a),
-        .web0   (web0_a),
-        .wmask0 (wmask0_a),
-        .addr0  (addr0_a),
-        .din0   (din0_a),
+        .csb0   (~data_csb),
+        .web0   (bus_web),
+        .wmask0 (bus_wmask),
+        .addr0  (bus_addr),
+        .din0   (bus_din),
         .dout0  (),
 
         // Port 1 - To MAC
         .clk1   (CLK),
         .csb1   (~data_rd_en),
-        .addr1  (data_rd_addr),
-        .dout1  (data_rd_data)
+        .addr1  (MAC_addr),
+        .dout1  (data_dout)
     );
     
     // Unpack 32-bit SRAM word into 4 x INT8
-    assign data_to_mac[0] = signed'(data_rd_data[7:0]);
-    assign data_to_mac[1] = signed'(data_rd_data[15:8]);
-    assign data_to_mac[2] = signed'(data_rd_data[23:16]);
-    assign data_to_mac[3] = signed'(data_rd_data[31:24]);
-
-    // Advance Weight Address when Accumulating
-    always_ff @(posedge CLK) begin
-        if (RESET || load)
-            k_addr <= '0;
-        else if (acc_en)
-            k_addr <= k_addr + 1'b1;
-    end
+    assign data_to_mac[0] = signed'(data_dout[7:0]);
+    assign data_to_mac[1] = signed'(data_dout[15:8]);
+    assign data_to_mac[2] = signed'(data_dout[23:16]);
+    assign data_to_mac[3] = signed'(data_dout[31:24]);
     
 
     // Weight Buffer SRAM
     sky130_sram_2kbyte_1rw1r_32x512_8 wgt_buffer (
         // Port 0 - DMA write
         .clk0   (CLK),
-        .csb0   (csb0_b),
-        .web0   (web0_b),
-        .wmask0 (wmask0_b),
-        .addr0  (addr0_b),
-        .din0   (din0_b),
+        .csb0   (~wgt_csb),
+        .web0   (bus_web),
+        .wmask0 (bus_wmask),
+        .addr0  (bus_addr),
+        .din0   (bus_din),
         .dout0  (),
 
         // Port 1 - MAC read
         .clk1   (CLK),
-        .csb1   (~acc_en),
-        .addr1  (k_addr),
+        .csb1   (~wgt_rd_en),
+        .addr1  (MAC_addr),
         .dout1  (wgt_dout)
     );
     
@@ -180,12 +229,16 @@ module NPU_topmodule (
     assign wgt_to_mac[1] = signed'(wgt_dout[15:8]);
     assign wgt_to_mac[2] = signed'(wgt_dout[23:16]);
     assign wgt_to_mac[3] = signed'(wgt_dout[31:24]);
-    
+
+    // =========================================================================
+    // MAC
+    // =========================================================================
+  
     // MAC
      MAC_pip_4ln_8b MAC (
         .clk     (CLK),
         .reset   (RESET),
-        .bias    (BIAS),
+        .bias    (bias_dout),
         .data    (data_to_mac),
         .weight  (wgt_to_mac),
         .acc_en  (acc_en),
@@ -202,9 +255,11 @@ module NPU_topmodule (
             sat_result = mac_result;
     end
     
-    
  
+    // =========================================================================
     // Output SRAM
+    // =========================================================================
+    
     sky130_sram_2kbyte_1rw1r_32x512_8 out_sram (
         // Port 0 - FSM writes collected results
         .clk0   (CLK),
@@ -217,9 +272,9 @@ module NPU_topmodule (
 
         // Port 1 - DMA reads for writeback
         .clk1   (CLK),
-        .csb1   (csb1_out),
-        .addr1  (addr1_out),
-        .dout1  (out_rd_data)
+        .csb1   (~bus_csb1),
+        .addr1  (bus_addr1),
+        .dout1  (bus_dout1)
     );
     
 endmodule
