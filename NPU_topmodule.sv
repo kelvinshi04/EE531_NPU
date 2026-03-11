@@ -74,8 +74,6 @@ module NPU_topmodule (
     
     //MAC Variables
     logic [8:0] MAC_addr; // Controlled  by Addr Counter
-    logic signed [7:0] data_to_mac [4];
-    logic signed [7:0] wgt_to_mac [4];
     logic signed [31:0] mac_result;
     logic signed [31:0] sat_result;
     logic overflow; 
@@ -199,14 +197,7 @@ module NPU_topmodule (
         .dout1  (data_dout)
     );
     
-    // Unpack 32-bit SRAM word into 4 x INT8
-    assign data_to_mac[0] = signed'(data_dout[7:0]);
-    assign data_to_mac[1] = signed'(data_dout[15:8]);
-    assign data_to_mac[2] = signed'(data_dout[23:16]);
-    assign data_to_mac[3] = signed'(data_dout[31:24]);
     
-
-    // Weight Buffer SRAM
     sky130_sram_2kbyte_1rw1r_32x512_8 wgt_buffer (
         // Port 0 - DMA write
         .clk0   (CLK),
@@ -223,12 +214,7 @@ module NPU_topmodule (
         .addr1  (MAC_addr),
         .dout1  (wgt_dout)
     );
-    
-    // Unpack 32-bit SRAM word into 4 x INT8
-    assign wgt_to_mac[0] = signed'(wgt_dout[7:0]);
-    assign wgt_to_mac[1] = signed'(wgt_dout[15:8]);
-    assign wgt_to_mac[2] = signed'(wgt_dout[23:16]);
-    assign wgt_to_mac[3] = signed'(wgt_dout[31:24]);
+   
 
     // =========================================================================
     // MAC
@@ -239,8 +225,8 @@ module NPU_topmodule (
         .clk     (CLK),
         .reset   (RESET),
         .bias    (bias_dout),
-        .data    (data_to_mac),
-        .weight  (wgt_to_mac),
+        .data    (data_dout),
+        .weight  (wgt_dout),
         .acc_en  (acc_en),
         .load    (load),
         .result  (mac_result),
