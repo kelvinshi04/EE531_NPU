@@ -25,6 +25,7 @@ module Address_Counter (
     input  logic        reset,
     input  logic        inc_addr,       // tie to acc_en from FSM
     input  logic [3:0]  vector_size,    // power-of-two vector length in bytes
+    input  logic write_succ,
 
     output logic [8:0]  addr,           // SRAM read address → MAC
     output logic [8:0]  output_addr,    // output SRAM write address
@@ -34,7 +35,6 @@ module Address_Counter (
     // -------------------------------------------------------------------------
     // Internal signals
     // -------------------------------------------------------------------------
-    logic [1:0]  sub_cnt;       // counts acc_en pulses 0→3
     logic [8:0]  vec_cnt;       // counts SRAM steps within current vector
     logic [8:0]  vec_len;       // number of SRAM steps per vector = 2^vector_size / 4
 
@@ -45,32 +45,26 @@ module Address_Counter (
     // -------------------------------------------------------------------------
     // Sequential logic
     // -------------------------------------------------------------------------
-    always_ff @(posedge clk) begin
-        if (reset) begin
-            sub_cnt     <= 2'd0;
+    always_ff @(posedge clk or negedge reset) begin
+        if (~reset) begin
             vec_cnt     <= 9'd0;
             addr        <= 9'd0;
             output_addr <= 9'd0;
             vec_done    <= 1'b0;
         end else begin
             vec_done <= 1'b0;   // default: pulse low every cycle
+            
+            if (write_succ)
+                output_addr <= output_addr + 9'd1;
 
             if (inc_addr) begin
-                // Every 4 acc_en pulses → advance SRAM address
-                if (sub_cnt == 2'd3) begin
-                    sub_cnt <= 2'd0;
-                    addr    <= addr + 9'd1;
-                    if (vec_cnt == vec_len - 9'd1) begin
-                        // Vector complete
-                        vec_cnt     <= 9'd0;
-                        output_addr <= output_addr + 9'd1;
-                        vec_done    <= 1'b1;    // pulse FSM to drain MAC
-                    end else begin
-                        vec_cnt <= vec_cnt + 9'd1;
-                    end
-
+                addr    <= addr + 9'd1;
+                if (vec_cnt == vec_len - 9'd1) begin
+                    // Vector complete
+                    vec_cnt     <= 9'd0;
+                    vec_done    <= 1'b1;    // pulse FSM to drain MAC
                 end else begin
-                    sub_cnt <= sub_cnt + 2'd1;
+                    vec_cnt <= vec_cnt + 9'd1;
                 end
             end
         end

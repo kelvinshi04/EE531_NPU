@@ -26,6 +26,7 @@ module Control_FSM(
     input  logic start_npu,
     output logic npu_done,
     output logic inc_addr,
+    output logic write_succ,
     input  logic [8:0] addr,
     input  logic vec_done,
 
@@ -37,6 +38,7 @@ module Control_FSM(
     output logic data_csb,
     output logic wgt_csb,
     output logic bus_csb1,
+    output logic bias_latch,
 
     output logic bias_rd_en,
     output logic data_rd_en,
@@ -50,7 +52,7 @@ module Control_FSM(
     // =========================================================================
     // Declarations
     // =========================================================================
-    logic [2:0] drain_cnt;
+    logic [2:0] drain_cnt, mac_init_cnt;
     
     // =========================================================================
     // State definition
@@ -60,7 +62,7 @@ module Control_FSM(
         LOAD_BIAS   = 4'b0001,
         LOAD_DATA   = 4'b0010,
         LOAD_WGTS   = 4'b0011,
-        MAC_INIT    = 4'b0100,
+//        MAC_INIT    = 4'b0100,
         COMPUTE     = 4'b0101,
         DRAIN_MAC   = 4'b0110,
         COLLECT     = 4'b0111,
@@ -73,10 +75,11 @@ module Control_FSM(
     // =========================================================================
     // State register - sequential
     // =========================================================================
-    always_ff @(posedge clk) begin
-        if (reset) begin
+    always_ff @(posedge clk or negedge reset) begin
+        if (~reset) begin
             pres_state <= IDLE;
             drain_cnt <= '0;
+            mac_init_cnt <= '0;
         end else begin
             pres_state <= next_state;
             
@@ -84,6 +87,11 @@ module Control_FSM(
                 drain_cnt <= drain_cnt + 1'b1;
             else
                 drain_cnt <= '0;
+                
+            if (pres_state == COMPUTE)
+                mac_init_cnt <= mac_init_cnt + 1'b1;
+            else
+                mac_init_cnt <= '0;
         end
     end
     
@@ -101,16 +109,18 @@ module Control_FSM(
         bus_csb1   = 1'b0;      // output SRAM port 1 - 1 = deselected (active low, no inversion)
         bias_rd_en = 1'b0;      // MAC data/bias read - off by default
         data_rd_en = 1'b0;      // MAC data/bias read - off by default
-        wgt_rd_en = 1'b0;      // MAC data/bias read - off by default
+        wgt_rd_en  = 1'b0;      // MAC data/bias read - off by default
         acc_en     = 1'b0;      // MAC accumulator - off by default
         load       = 1'b0;      // MAC load enable - off by default
         out_wr_en  = 1'b0;      // output SRAM write - off by default
-        
+        npu_done   = 1'b0;
+        bias_latch = 1'b0;
+        write_succ = 1'b0;
         next_state = pres_state;
     
         case (pres_state)
             IDLE: begin
-                if (start_npu)begin
+                if (start_npu) begin
                     next_state = LOAD_BIAS;
                 end else begin 
                     next_state = IDLE;
@@ -146,26 +156,39 @@ module Control_FSM(
                 wgt_csb     = 1'b1;
                 start_dma   = 1'b1;
                 if (done)begin
-                    next_state = MAC_INIT;
+                    next_state = COMPUTE;
                 end else begin 
                     next_state = LOAD_WGTS;
                 end
             end
             
-            MAC_INIT: begin
-                wgt_csb     = 1'b0;
-                start_dma   = 1'b0;
-                load        = 1'b1;
-                acc_en      = 1'b0;
-                bias_rd_en  = 1'b1;
-                next_state = COMPUTE;
-            end
+//            MAC_INIT: begin
+//                acc_en      = 1'b0;
+//                bias_rd_en  = 1'b1;
+//                inc_addr   = 1'b1;
+//                data_rd_en = 1'b1;
+//                wgt_rd_en  = 1'b1;
+//                bias_latch = 1'b1;
+//                if (mac_init_cnt == 3'd4)begin
+//                    load        = 1'b1;
+//                    next_state = COMPUTE;
+//                end else begin
+//                    next_state = MAC_INIT;
+//                end
+//            end
             
             
             COMPUTE: begin
+                if (mac_init_cnt == 3'd4 || mac_init_cnt == 3'd3)begin
+                    acc_en      = 1'b0;
+                    bias_latch = 1'b1;
+                end else begin
+                    acc_en      = 1'b1;
+                    bias_latch = 1'b0;
+                end
                 load       = 1'b1;
-                acc_en     = 1'b1;
                 inc_addr   = 1'b1;
+                bias_rd_en  = 1'b1;
                 data_rd_en = 1'b1;
                 wgt_rd_en  = 1'b1;
                 if (vec_done) begin
@@ -179,7 +202,8 @@ module Control_FSM(
                 load       = 1'b1;
                 acc_en     = 1'b1;
                 inc_addr   = 1'b0;
-                if (drain_cnt == 3'd3)begin
+                if (drain_cnt == 3'd4)begin
+                    
                     next_state = COLLECT;
                 end else begin
                     next_state = DRAIN_MAC;
@@ -191,12 +215,9 @@ module Control_FSM(
                 load       = 1'b0;
                 acc_en     = 1'b0;
                 inc_addr   = 1'b0;
-                out_wr_en = 1'b1;
-                if (addr == 9'b111111111) begin // At end of SRAM begin writeback
-                    next_state = WRITEBACK;
-                end else begin
-                    next_state = MAC_INIT;
-                end
+                out_wr_en  = 1'b1;
+                write_succ = 1'b1;
+                next_state = WRITEBACK;
             end
             
             

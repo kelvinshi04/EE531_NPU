@@ -50,9 +50,10 @@ module NPU_topmodule (
     //Scratchpad Signals
     logic bias_csb, data_csb, wgt_csb, bus_csb1;
     logic bias_rd_en, data_rd_en, wgt_rd_en;
+    logic write_succ;
     
     //MAC Variables
-    logic acc_en, load;
+    logic acc_en, load, bias_latch;
     logic inc_addr;
     
     //Output SRAM
@@ -100,12 +101,14 @@ module NPU_topmodule (
         .data_csb   (data_csb),
         .wgt_csb    (wgt_csb),
         .bus_csb1   (bus_csb1),
+        .bias_latch (bias_latch),
         .bias_rd_en (bias_rd_en),
         .data_rd_en (data_rd_en),
         .wgt_rd_en  (wgt_rd_en),
         .acc_en     (acc_en),
         .load       (load),
-        .out_wr_en  (out_wr_en)
+        .out_wr_en  (out_wr_en),
+        .write_succ (write_succ)
     );
     
     
@@ -115,6 +118,7 @@ module NPU_topmodule (
         .reset       (RESET),
         .inc_addr    (inc_addr),   
         .vector_size (VECTOR_SIZE),
+        .write_succ (write_succ),
     
         .addr        (MAC_addr), 
         .output_addr (out_wr_addr), 
@@ -154,7 +158,6 @@ module NPU_topmodule (
         
         // Output SRAM access
         .bus_addr1    (bus_addr1),
-        .bus_csb1     (bus_csb1),
         .bus_dout1    (bus_dout1)
     );
     
@@ -229,6 +232,7 @@ module NPU_topmodule (
         .weight  (wgt_dout),
         .acc_en  (acc_en),
         .load    (load),
+        .ltch_bias (bias_latch),
         .result  (mac_result),
         .cout    (overflow)
     );   
@@ -264,4 +268,3 @@ module NPU_topmodule (
     );
     
 endmodule
-
