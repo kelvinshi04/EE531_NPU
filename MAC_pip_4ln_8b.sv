@@ -30,6 +30,7 @@ module MAC_pip_4ln_8b(
     
     input logic acc_en,
     input logic load,
+    input logic ld_input,
     input logic ltch_bias,
     
     output logic signed [31:0] result,
@@ -52,8 +53,8 @@ module MAC_pip_4ln_8b(
     
     logic signed [31:0] out;
     
-    reg_nb #(.n(32)) data_buf (data, clk, reset, d_buf);
-    reg_nb #(.n(32)) wght_buf (weight, clk, reset, w_buf);
+    reg_ld_nb #(.n(32)) data_buf (data, clk, reset, ld_input, d_buf);
+    reg_ld_nb #(.n(32)) wght_buf (weight, clk, reset, ld_input, w_buf);
     
     // Parallel 4-lane multiplication
     booth_mult_8b m1 (d_buf[7:0], w_buf[7:0], prod_in[0]);
