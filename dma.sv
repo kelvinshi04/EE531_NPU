@@ -72,7 +72,6 @@ module dma (
     // Output SRAM Port 1 read path (writeback source)
     // -------------------------------------------------------------------------
     output logic [8:0]  bus_addr1,      // read address to output SRAM Port 1
-    output logic        bus_csb1,       // active low chip select for Port 1
     input  logic [31:0] bus_dout1       // read data from output SRAM Port 1
 );
 
@@ -85,7 +84,8 @@ module dma (
         READ_REQ  = 3'b010,
         READ_WAIT = 3'b011,
         WRITEBACK = 3'b100,
-        DONE      = 3'b101
+        DONE      = 3'b101,
+        LOAD_WAIT = 3'b110
     } state_t;
 
     state_t state, next_state;
@@ -100,8 +100,8 @@ module dma (
     // -------------------------------------------------------------------------
     // FSM State Register + registered done
     // -------------------------------------------------------------------------
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
+    always_ff @(posedge clk or negedge reset) begin
+        if (~reset) begin
             state <= IDLE;
             done  <= 1'b0;
         end else begin
@@ -118,8 +118,9 @@ module dma (
         case (state)
             IDLE:
                 if (start)
-                    next_state = direction ? READ_REQ : LOAD;
-
+                    next_state = direction ? READ_REQ : LOAD_WAIT;
+            LOAD_WAIT:
+                next_state = LOAD;
             LOAD:
                 if (words_remaining == 9'd1 && src_valid && src_ready)
                     next_state = DONE;
@@ -149,8 +150,8 @@ module dma (
     // -------------------------------------------------------------------------
     // Address Counter and Transfer Control
     // -------------------------------------------------------------------------
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
+    always_ff @(posedge clk or negedge reset) begin
+        if (~reset) begin
             addr_cnt        <= '0;
             words_remaining <= '0;
             direction_r     <= '0;
@@ -163,6 +164,9 @@ module dma (
                         direction_r     <= direction;
                     end
                 end
+                
+                LOAD_WAIT:
+                    ;
 
                 LOAD: begin
                     if (src_valid && src_ready) begin
@@ -172,7 +176,7 @@ module dma (
                 end
 
                 WRITEBACK: begin
-                    if (dst_ready && dst_valid && words_remaining != 9'd0) begin
+                    if (dst_ready && dst_valid) begin
                         addr_cnt        <= addr_cnt + 9'd1;
                         words_remaining <= words_remaining - 9'd1;
                     end
@@ -193,7 +197,7 @@ module dma (
     // NOTE: bus_web being low AND the FSM asserting csb together form
     //       a valid write - neither alone causes a write
     // -------------------------------------------------------------------------
-    assign src_ready = (state == LOAD) && (words_remaining != 9'd0);
+    assign src_ready = (state == LOAD || state == LOAD_WAIT) && (words_remaining != 9'd0);
 
     assign bus_web   = ~(src_valid && src_ready);  // active low
     assign bus_addr  = addr_cnt;
@@ -207,7 +211,6 @@ module dma (
     // dst_valid: high when data is ready in WRITEBACK state
     // dst_data:  directly from SRAM Port 1 output
     // -------------------------------------------------------------------------
-    assign bus_csb1  = ~(state == READ_REQ || state == READ_WAIT);
     assign bus_addr1 = addr_cnt;
     assign dst_valid = (state == WRITEBACK);
     assign dst_data  = bus_dout1;
