@@ -1,0 +1,68 @@
+{
+    "DESIGN_NAME": "NPU_topmodule",
+    "VERILOG_FILES": [
+        "dir::Address_Counter.sv",
+        "dir::booth_enc_rad4.sv",
+        "dir::booth_mult_8b.sv",
+        "dir::cla_20b.sv",
+        "dir::cla_32b.sv",
+        "dir::cla_group_5b.sv",
+        "dir::cla_group_8b.sv",
+        "dir::Control_FSM.sv",
+        "dir::csa_2b.sv",
+        "dir::csa_16b.sv",
+        "dir::csa_18b.sv",
+        "dir::dma.sv",
+        "dir::full_adder.sv",
+        "dir::MAC_pip_4ln_8b.sv",
+        "dir::mux_2t1_32b.sv",
+        "dir::NPU_topmodule.sv",
+        "dir::reg_ld_nb.sv",
+        "dir::reg_nb.sv"
+    ],
+
+    "CLOCK_PERIOD": 10,
+    "CLOCK_PORT": "CLK",
+
+    "GRT_ANTENNA_ITERS": 5,
+    "FP_CORE_UTIL": 20,
+
+    "RUN_POST_CTS_RESIZER_TIMING": true,
+    "RUN_POST_GRT_RESIZER_TIMING": true,
+
+    "PL_MACRO_CHANNEL": [40, 40],
+    "PL_MACRO_HALO": [20, 20],
+
+    "GRT_ALLOW_CONGESTION": true,
+    "GRT_OVERFLOW_ITERS": 100,
+
+    "QUIT_ON_DISCONNECTED_PINS": false,
+    "QUIT_ON_TR_DRC": false,
+    "QUIT_ON_MAGIC_DRC": false,
+    "MAGIC_CONVERT_DRC_TAGGER": false,
+    "MAGIC_EXT_USE_GDS": true,
+
+    "EXTRA_VERILOG_MODELS": [
+        "dir::macros/verilog/sky130_sram_2kbyte_1rw1r_32x512_8.v"
+    ],
+
+    "FP_PDN_MACRO_HOOKS": "bias_sram vccd1 vccd1 vssd1 vssd1, data_sram vccd1 vccd1 vssd1 vssd1, wgt_buffer vccd1 vccd1 vssd1 vssd1, out_sram vccd1 vccd1 vssd1 vssd1",
+
+    "MACRO_PLACEMENT_CFG": "dir::macro_placement.cfg",
+
+    "MACROS": {
+        "sky130_sram_2kbyte_1rw1r_32x512_8": {
+            "gds": [
+                "/home/kbot04/.ciel/ciel/sky130/versions/0fe599b2afb6708d281543108caf8310912f54af/sky130A/libs.ref/sky130_sram_macros/gds/sky130_sram_2kbyte_1rw1r_32x512_8.gds"
+            ],
+            "lef": [
+                "/home/kbot04/.ciel/ciel/sky130/versions/0fe599b2afb6708d281543108caf8310912f54af/sky130A/libs.ref/sky130_sram_macros/lef/sky130_sram_2kbyte_1rw1r_32x512_8.lef"
+            ],
+            "nl": [],
+            "lib": {
+                "*": "/home/kbot04/.ciel/ciel/sky130/versions/0fe599b2afb6708d281543108caf8310912f54af/sky130A/libs.ref/sky130_sram_macros/lib/sky130_sram_2kbyte_1rw1r_32x512_8_TT_1p8V_25C.lib"
+            },
+            "spef": {}
+        }
+    }
+}
